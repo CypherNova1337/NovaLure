@@ -15,7 +15,6 @@ DEFAULT_REPORT_FILE = "NovaLure_Report.md"
 DEFAULT_REQUEST_TIMEOUT = 10
 DEFAULT_INTERACTSH_SERVER_FOR_CLIENT = "https://interact.sh"
 
-# Paths to external tools (ensure they are in PATH or specify full paths)
 INTERACTSH_CLIENT_PATH = "interactsh-client"
 ASSETFINDER_PATH = "assetfinder"
 HTTPROBE_PATH = "httprobe"
@@ -23,7 +22,7 @@ HTTPROBE_PATH = "httprobe"
 # --- Global Variables ---
 interactsh_base_domain = None
 interactsh_process = None
-INTERACTSH_TEMP_HITS_FILE = "interactsh_temp_hits.json" # Temporary file for interactsh-client
+INTERACTSH_TEMP_HITS_FILE = "interactsh_temp_hits.json"
 
 # ANSI Colors
 class Colors:
@@ -40,7 +39,6 @@ class Colors:
 VERBOSE_MODE = False
 QUIET_MODE = False
 
-# Regex to strip ANSI escape codes
 ANSI_ESCAPE_REGEX = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 def print_banner():
@@ -54,7 +52,7 @@ def print_banner():
 \____|__  /\____/ \_/  (____  /_______ \____/ |__|    \___  >
         \/                  \/        \/                  \/ 
     {Colors.GREEN}OAST Scanner by Cyphernova1337{Colors.ENDC}
-    Version 1.2 (Production Clean)
+    Version 1.2.1 (M4 Bugfix Attempt)
 """
     print(banner)
 
@@ -73,10 +71,10 @@ def console_log(message, level="INFO"):
         elif level == "EXEC": color = Colors.HEADER
         elif level == "INFO": color = Colors.CYAN
         
-        if level == "DEBUG" and not VERBOSE_MODE:
+        if level == "DEBUG" and not VERBOSE_MODE: # Only print DEBUG if verbose explicitly on
              return
         print(f"{color}{prefix}{message}{Colors.ENDC if color else ''}")
-    else:
+    else: # Not verbose - minimal prefixes, more colors
         if level == "SUCCESS_IMPORTANT":
             print(f"{Colors.BOLD}{Colors.GREEN}[*] {message}{Colors.ENDC}")
         elif level == "SUCCESS":
@@ -89,11 +87,11 @@ def console_log(message, level="INFO"):
             print(f"{Colors.BLUE}[i] {message}{Colors.ENDC}")
         elif level == "EXEC":
              print(f"{Colors.HEADER}[>] {message}{Colors.ENDC}")
-        elif level == "REPORT_INFO":
+        elif level == "REPORT_INFO": 
              print(f"{Colors.CYAN}[R] {message}{Colors.ENDC}")
 
 def start_interactsh_client(server_url):
-    """Starts interactsh-client, captures its base domain, and lets it run."""
+    """Starts interactsh-client, captures its base domain."""
     global interactsh_base_domain, interactsh_process, INTERACTSH_TEMP_HITS_FILE
 
     if os.path.exists(INTERACTSH_TEMP_HITS_FILE):
@@ -246,7 +244,7 @@ def get_live_urls_from_file(input_domains_file, skip_assetfinder=False, skip_htt
         console_log(f"Exception in get_live_urls_from_file: {e}", level="ERROR")
     return live_urls
 
-def generate_oast_identifier(target_url_raw, method_tag):
+def generate_oast_identifier(target_url_raw, method_tag_base, param_name=None):
     """Generates a unique identifier string for OAST payload, suitable for subdomains."""
     global interactsh_base_domain
     if not interactsh_base_domain:
@@ -256,7 +254,11 @@ def generate_oast_identifier(target_url_raw, method_tag):
     target_host_sanitized = parsed_target.hostname.replace('.', '-') if parsed_target.hostname else "no-hostname"
     target_host_sanitized = re.sub(r'[^a-zA-Z0-9-]', '', target_host_sanitized)[:30].strip('-') 
     
-    method_tag_sanitized = re.sub(r'[^a-zA-Z0-9-]', '', method_tag.lower())
+    method_tag_sanitized = re.sub(r'[^a-zA-Z0-9-]', '', method_tag_base.lower())
+    if param_name:
+        param_name_sanitized = re.sub(r'[^a-zA-Z0-9-]', '', param_name.lower())[:10] 
+        method_tag_sanitized = f"{method_tag_sanitized}-{param_name_sanitized}"
+
     timestamp_micro = str(int(time.time()*1000000)%1000000) 
     unique_part = f"{method_tag_sanitized}-{target_host_sanitized}-ts{timestamp_micro}"
     
@@ -269,7 +271,7 @@ def generate_oast_identifier(target_url_raw, method_tag):
 
 def test_url_for_oast(target_url, req_timeout):
     """Sends various OAST payloads to the target URL and returns findings."""
-    console_log(f"Target: {target_url}", level="DEBUG") # Changed from "Testing URL"
+    console_log(f"Target: {target_url}", level="DEBUG")
     url_findings = {"target": target_url, "tests": []}
     
     import requests 
@@ -284,47 +286,32 @@ def test_url_for_oast(target_url, req_timeout):
     for tag, details in test_methods.items():
         oast_full_domain, oast_unique_id = generate_oast_identifier(target_url, tag) 
         if not oast_full_domain:
-            # Error already logged by generate_oast_identifier if interactsh_base_domain is None
-            # This check is more if generate_oast_identifier itself failed for other reasons
             console_log(f"Skipping {tag} for {target_url} due to OAST URL generation failure.", level="ERROR")
             url_findings["tests"].append({
-                "method_tag": tag, "errors": "OAST URL generation failed", 
-                "oast_identifier": "N/A", "oast_full_domain": "N/A", 
-                "sent_payload_description": "N/A", "interactsh_hits":[]
+                "method_tag": tag, "errors": ["OAST URL generation failed"], 
+                "oast_identifier": oast_unique_id or "N/A", "oast_full_domain": oast_full_domain or "N/A", 
+                "sent_payload_description":"N/A", "status_code": "Setup Error", "interactsh_hits":[]
             })
             continue
 
         current_test_info = {
-            "method_tag": tag,
-            "oast_identifier": oast_unique_id, 
-            "oast_full_domain": oast_full_domain, 
-            "sent_payload_value": oast_full_domain, 
-            "sent_payload_description": "",
-            "status_code": "Not Set", 
-            "reflection_in_body": False,
-            "open_redirect_found": None,
-            "errors": None,
-            "interactsh_hits": []
+            "method_tag": tag, "oast_identifier": oast_unique_id, "oast_full_domain": oast_full_domain, 
+            "sent_payload_value": oast_full_domain, "sent_payload_description": "", "status_code": "Not Set", 
+            "reflection_in_body": False, "open_redirect_found": None, "errors": [], "interactsh_hits": []
         }
 
         try:
             if "header" in details:
                 header_name = details["header"]
-                headers = {header_name: oast_full_domain, "User-Agent": "NovaLure-OAST-Scanner/1.2"}
+                headers = {header_name: oast_full_domain, "User-Agent": "NovaLure-OAST-Scanner/1.2.1"}
                 current_test_info["sent_payload_description"] = f"Header '{header_name}: {oast_full_domain}'"
                 console_log(f"  [{tag}] Sending: {current_test_info['sent_payload_description']}", level="DEBUG")
-                
                 response = requests.get(target_url, headers=headers, timeout=req_timeout, allow_redirects=True, verify=False)
                 current_test_info["status_code"] = response.status_code
-
-                if oast_full_domain in response.text:
-                    current_test_info["reflection_in_body"] = True
-                
+                if oast_full_domain in response.text: current_test_info["reflection_in_body"] = True
                 for r_hist in response.history:
-                    if r_hist.status_code in [301, 302, 303, 307, 308] and r_hist.headers.get("Location"):
-                        if oast_full_domain in r_hist.headers["Location"]: 
-                            current_test_info["open_redirect_found"] = r_hist.headers["Location"]
-                            break 
+                    if r_hist.status_code in [301, 302, 303, 307, 308] and r_hist.headers.get("Location") and oast_full_domain in r_hist.headers["Location"]:
+                        current_test_info["open_redirect_found"] = r_hist.headers["Location"]; break
             
             elif tag == "M4_ReqTarget":
                 target_for_m4_payload = f"http://{oast_full_domain}/M4_HIT_PATH_NOVALURE" 
@@ -333,18 +320,19 @@ def test_url_for_oast(target_url, req_timeout):
                 console_log(f"  [{tag}] Sending: {current_test_info['sent_payload_description']}", level="DEBUG")
                 
                 status_code_from_curl = "M4_Status_Error" 
+                process_result = None # Initialize to check if subprocess.run was attempted
 
                 try:
+                    # Using %% to escape % for f-string, ensuring literal %{http_code} for curl
                     curl_m4_cmd = (
                         f"curl -s -L --connect-timeout {int(req_timeout/2)} --max-time {req_timeout} "
-                        f"-H \"User-Agent: NovaLure-OAST-Scanner/1.2\" " 
-                        f"\"{target_url}\" --request-target \"{target_for_m4_payload}\" -o /dev/null -w \"%{http_code}\""
+                        f"-H \"User-Agent: NovaLure-OAST-Scanner/1.2.1\" " 
+                        f"\"{target_url}\" --request-target \"{target_for_m4_payload}\" -o /dev/null -w \"%%{{http_code}}\""
                     )
                     process_result = subprocess.run(shlex.split(curl_m4_cmd), capture_output=True, text=True, timeout=req_timeout + 2)
                     
                     if process_result.stderr:
-                        err_msg = f"curl stderr: {process_result.stderr.strip()}"
-                        current_test_info["errors"] = f"{current_test_info.get('errors', '')}; {err_msg}".lstrip('; ')
+                        current_test_info["errors"].append(f"curl stderr: {process_result.stderr.strip()}")
                     
                     status_code_str = process_result.stdout.strip()
                     if status_code_str.isdigit() and len(status_code_str) == 3:
@@ -353,33 +341,40 @@ def test_url_for_oast(target_url, req_timeout):
                         status_code_from_curl = f"cURL_status: {status_code_str}" if status_code_str else "cURL_NoStatusOutput"
                 
                 except subprocess.TimeoutExpired:
-                    current_test_info["errors"] = f"{current_test_info.get('errors', '')}; curl command for M4 timed out.".lstrip('; ')
+                    current_test_info["errors"].append("curl command for M4 timed out.")
                     status_code_from_curl = "Timeout (curl M4)"
                 except FileNotFoundError: 
-                    current_test_info["errors"] = f"{current_test_info.get('errors', '')}; curl command not found for M4.".lstrip('; ')
+                    current_test_info["errors"].append("curl command not found for M4.")
                     status_code_from_curl = "CurlNotFound (M4)"
                 except Exception as sub_e: 
-                    error_msg = f"Subprocess/Curl execution error for M4: {str(sub_e)}"
-                    current_test_info["errors"] = f"{current_test_info.get('errors', '')}; {error_msg}".lstrip('; ')
-                    status_code_from_curl = "ErrorInCurlExec (M4)"
+                    # This will catch other errors from subprocess.run or shlex.split
+                    # including the potential NameError if it was somehow still occurring here.
+                    current_test_info["errors"].append(f"Subprocess/Curl execution error for M4: {str(sub_e)}")
+                    status_code_from_curl = "ErrorInCurlExec (M4)" # Consistent with report
                 
                 current_test_info["status_code"] = status_code_from_curl
         
-        except requests.exceptions.Timeout:
-            current_test_info["errors"] = "Request timed out."
+        except requests.exceptions.Timeout: 
+            current_test_info["errors"].append("Request timed out.")
             current_test_info["status_code"] = "Timeout"
-        except requests.exceptions.RequestException as e:
-            current_test_info["errors"] = str(e)
+        except requests.exceptions.RequestException as e: 
+            current_test_info["errors"].append(str(e))
             current_test_info["status_code"] = "Request Error"
-        except NameError as ne: # Should be less likely with M4 changes
-            current_test_info["errors"] = f"Specific NameError caught: {str(ne)}"
+        except NameError as ne: 
+            current_test_info["errors"].append(f"Unexpected NameError in test {tag}: {str(ne)}")
             current_test_info["status_code"] = "NameError in Test"
         except Exception as e: 
-            current_test_info["errors"] = f"Unexpected error in test method {tag}: {str(e)}"
+            current_test_info["errors"].append(f"Unexpected error in test method {tag}: {str(e)}")
             current_test_info["status_code"] = "Unexpected Script Error"
         
+        # Join errors if list is not empty
+        if current_test_info["errors"]:
+            current_test_info["errors"] = "; ".join(current_test_info["errors"])
+        else: # If list is empty, set to None for cleaner report
+            current_test_info["errors"] = None
+
         url_findings["tests"].append(current_test_info)
-        time.sleep(0.2) 
+        time.sleep(0.1) # Shorter delay
         
     return url_findings
 
@@ -412,13 +407,12 @@ def parse_and_correlate_interactsh_hits(all_tested_payloads_info):
             matched_to_payload = False
             for url_payloads_info in all_tested_payloads_info:
                 for test_info in url_payloads_info["tests"]:
-                    if hit_full_domain_interactsh == test_info["oast_full_domain"]:
+                    if hit_full_domain_interactsh == test_info.get("oast_full_domain"):
                         hit_details = {
-                            "protocol": hit.get("protocol"),
-                            "source_ip": hit.get("remote-address"),
+                            "protocol": hit.get("protocol"), "source_ip": hit.get("remote-address"),
                             "timestamp": hit.get("timestamp"),
                             "raw_request": hit.get("raw-request", None) if hit.get("protocol") == "http" else None,
-                            "matched_oast_identifier": test_info["oast_identifier"] 
+                            "matched_oast_identifier": test_info.get("oast_identifier") 
                         }
                         test_info["interactsh_hits"].append(hit_details)
                         processed_hits_count += 1
@@ -426,7 +420,6 @@ def parse_and_correlate_interactsh_hits(all_tested_payloads_info):
             
             if not matched_to_payload:
                 console_log(f"Unmatched Interactsh hit for domain (not tied to a sent payload): {hit_full_domain_interactsh}", level="DEBUG")
-
         except json.JSONDecodeError:
             pass 
     
@@ -458,10 +451,11 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
         
         for url_result in all_tests_results:
             url_had_oast_hit = False
-            for test in url_result["tests"]:
-                if test["interactsh_hits"]:
-                    url_had_oast_hit = True
-                    total_oast_interactions_recorded += len(test["interactsh_hits"])
+            if url_result.get("tests"): 
+                for test in url_result["tests"]:
+                    if test.get("interactsh_hits"): 
+                        url_had_oast_hit = True
+                        total_oast_interactions_recorded += len(test["interactsh_hits"])
             if url_had_oast_hit:
                 targets_with_oast_hits +=1
         
@@ -471,11 +465,11 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
         f.write("---\n\n")
         
         f.write("## Detailed Findings\n\n")
-        if not any(url_result.get("tests") for url_result in all_tests_results): # Check if "tests" key exists
+        if not any(url_result.get("tests") for url_result in all_tests_results):
              f.write("No specific test results to display.\n")
 
         for url_result in all_tests_results:
-            f.write(f"### Target: `{url_result['target']}`\n\n")
+            f.write(f"### Target: `{url_result.get('target', 'N/A')}`\n\n")
             if not url_result.get("tests"):
                 f.write("  - No tests performed or recorded for this target.\n\n")
                 continue
@@ -488,13 +482,13 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
                     f.write(f"    - **Sent Payload Description:** `{test.get('sent_payload_description','N/A')}`\n")
                     f.write(f"    - **OAST Full Domain Sent:** `{test.get('oast_full_domain','N/A')}`\n")
                     f.write(f"    - **OAST Identifier:** `{test.get('oast_identifier','N/A')}`\n")
-                    if test.get('status_code') is not None: # Check if status_code exists
+                    if test.get('status_code') is not None: 
                         f.write(f"    - **Response Status (Direct):** `{test['status_code']}`\n")
                     if test.get("reflection_in_body"):
                         f.write(f"    - **Direct Reflection in Body:** `Yes`\n")
                     if test.get("open_redirect_found"):
                         f.write(f"    - **Potential Open Redirect To:** `{test['open_redirect_found']}`\n")
-                    if test.get("errors"):
+                    if test.get("errors"): # errors is now a string or None
                         f.write(f"    - **Errors During Test:** `{test['errors']}`\n")
                     
                     if test.get("interactsh_hits"):
@@ -512,7 +506,6 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
                 f.write("  - No direct reflections, open redirects, errors, or OAST hits recorded for this target under tested methods.\n")
             f.write("\n---\n\n")
     console_log(f"Markdown report generated: {report_file_path}", level="REPORT_INFO")
-
 
 def main():
     global VERBOSE_MODE, QUIET_MODE
@@ -572,7 +565,6 @@ def main():
     VERBOSE_MODE = args.verbose
     QUIET_MODE = args.quiet
     if VERBOSE_MODE and QUIET_MODE:
-        # console_log is not used here as QUIET_MODE might suppress it. Direct print.
         print(f"{Colors.RED}{Colors.BOLD}[!] Cannot be both verbose (-v) and quiet (-q). Exiting.{Colors.ENDC}")
         return
 
@@ -584,7 +576,6 @@ def main():
             os.remove(args.output_file)
         except OSError as e:
             console_log(f"Could not remove existing report file {args.output_file}: {e}", level="ERROR")
-            # Decide if this is fatal or if we should append a timestamp to the filename
             return 
     
     console_log("### NovaLure OAST Scanner Starting ###", level="INFO")
