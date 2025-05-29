@@ -129,20 +129,17 @@ Examples:
 python3 NovaLure.py
 ```
 Specify input and output files, and use an alternative Interactsh server (if interact.sh is unresolvable):
-Bash
-
+```
 python3 NovaLure.py -i my_targets.txt -o scan_results.md --interactsh-server [https://oast.pro](https://oast.pro)
-
+```
 Run in verbose mode with a longer timeout:
-Bash
-
+```
 python3 NovaLure.py -v -t 20
-
+```
 Skip recon tools if my_live_urls.txt contains full, live URLs:
-Bash
-
-    python3 NovaLure.py -i my_live_urls.txt --skip-assetfinder --skip-httprobe
-
+```
+python3 NovaLure.py -i my_live_urls.txt --skip-assetfinder --skip-httprobe
+```
 Output
 
     Console: Provides live feedback.
