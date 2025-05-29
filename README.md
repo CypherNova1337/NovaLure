@@ -119,18 +119,18 @@ options:
   -v, --verbose         Enable verbose output, including DEBUG messages.
   -q, --quiet           Suppress most informational console output; only show
                         critical errors or major findings.
+```
 
 Examples:
 
-    Run with default settings (input domains.txt, output NovaLure_Report.md):
-```
- Bash
+Run with default settings (input domains.txt, output NovaLure_Report.md):
+
 ```
 python3 NovaLure.py
 ```
 Specify input and output files, and use an alternative Interactsh server (if interact.sh is unresolvable):
 ```
-python3 NovaLure.py -i my_targets.txt -o scan_results.md --interactsh-server [https://oast.pro](https://oast.pro)
+python3 NovaLure.py -i my_targets.txt -o scan_results.md --interactsh-server https://oast.pro
 ```
 Run in verbose mode with a longer timeout:
 ```
