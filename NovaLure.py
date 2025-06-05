@@ -108,13 +108,12 @@ def print_banner():
     if QUIET_MODE:
         return
     banner = f"""
-{Colors.BOLD}{Colors.CYAN} _   _         _            _    _       
-{Colors.CYAN}| \\ | |       | |          | |  | |      
-{Colors.CYAN}|  \\| |  __ _ | | __ __ _ | |  | | _ __ 
-{Colors.CYAN}| . ` | / _` || |/ // _` || |/\\| || '_ \\ 
-{Colors.CYAN}| |\\  || (_| ||   <| (_| |\\  /\\  /| | | |
-{Colors.CYAN}\\_| \\_/ \\__,_||_|\\_\\\\__,_(_)\\/  \\/ |_| |_|
-{Colors.ENDC}
+ _______                      .____                          
+ \      \   _______  _______  |    |    __ _________   ____  
+ /   |   \ /  _ \  \/ /\__  \ |    |   |  |  \_  __ \_/ __ \ 
+/    |    (  <_> )   /  / __ \|    |___|  |  /|  | \/\  ___/ 
+\____|__  /\____/ \_/  (____  /_______ \____/ |__|    \___  >
+        \/                  \/        \/                  \/ 
     {Colors.GREEN}OAST Scanner by Cyphernova1337{Colors.ENDC}
     Version 2.2.0 (Finalized Input & Flags)
 """
