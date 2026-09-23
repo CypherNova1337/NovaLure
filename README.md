@@ -1,174 +1,127 @@
-<p align="center">
-  </p>
+# NovaLure
 
-<h1 align="center">NovaLure - OAST Automation Perfected</h1>
+Finds the bugs that never show up in the response — by making the server call you.
 
-<p align="center">
-  <strong>Unleash the power of Out-of-Band Application Security Testing (OAST) with NovaLure!</strong><br />
-  Automated discovery of Blind SSRF, Open Redirects, and other out-of-band vulnerabilities.
-  <br /><i>By Cyphernova1337</i>
-  <br /><br />
-  <img src="https://img.shields.io/badge/python-3.x-blue.svg" alt="Python 3.x">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT">
-  </p>
+![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+![python](https://img.shields.io/badge/python-3.8%2B-3776AB?style=flat-square)
 
----
+## What it does
 
-NovaLure is your smart assistant for OAST, designed for bug bounty hunters and penetration testers. It streamlines the detection of vulnerabilities that require out-of-band interaction, integrating seamlessly with Interactsh. Automate common header-based attacks, request-target manipulation, and fuzz GET parameters for open redirects.
+Some vulnerabilities leave no trace in what you get back. You send a request
+that makes the server fetch a URL of your choosing, and the page returns a
+perfectly normal 200. Nothing looks wrong. The server made the request out of
+sight, and you had no way to see it.
 
-Whether you're looking to scale your initial reconnaissance or find an alternative to manual OAST checks, NovaLure helps you uncover critical vulnerabilities efficiently.
+That's blind SSRF, and it's why scanners miss it.
 
-## ✨ Features
+The trick is to point the target at a host you control. If the server really
+does fetch that URL, you see the connection arrive on your side — and that
+arrival *is* the proof. You didn't need the response to tell you anything.
 
-* 🚀 **Automatic Interactsh Integration:** Hands-free setup and OAST domain capture.
-* 🎯 **Intelligent Target Discovery (Optional):** Leverages `assetfinder` and `httprobe` to find live targets.
-* 🛡️ **Diverse OAST Attack Vectors:**
-    * Header Injections: `X-Forwarded-For`, `X-Forwarded-Host`, `Host`.
-    * HTTP Request-Target Manipulation (for Blind SSRF).
-    * GET Parameter Fuzzing for Open Redirects with an extensive payload list.
-* 🔗 **Precise Interaction Correlation:** Unique payload identifiers for pinpointing vulnerable sources.
-* 👁️ **Client-Side Clue Detection:** Identifies direct reflections and potential/verified open redirects.
-* 📊 **Comprehensive Markdown Reporting:** Detailed, actionable reports for your findings.
-* 🎨 **User-Friendly Console:** Colored output with standard, verbose (`-v`), and quiet (`-q`) modes.
-* 🔧 **Highly Configurable:** Fine-tune scans with command-line arguments.
+NovaLure automates that. It spins up an Interactsh session to receive callbacks,
+sprays your target's parameters and headers with URLs pointing at it, and
+watches what comes back. Anything that phones home is reported with the request
+that caused it. It also fuzzes for open redirects while it's in there, since
+it's already testing every URL-shaped parameter.
 
----
+## Why you'd use it
 
-## 🛠️ Prerequisites
+- **Catches what nothing in the response would reveal** — blind SSRF is
+  invisible to anything that only reads replies.
+- **Tests headers as well as parameters**, because `X-Forwarded-Host` and
+  friends reach code that trusts them.
+- **Finds open redirects in the same pass**, which uses the same parameters.
+- **Writes a Markdown report** you can hand over rather than screenshots of a
+  terminal.
+- **Can pull in its own targets** via assetfinder and httprobe, or take a list
+  you already have.
 
-1.  **Python 3**
-2.  **`requests` Library:**
-    ```
-    pip install requests
-    ```
-3.  **Go-lang Based Tools** (ensure Go is installed and your `GOPATH/bin` or `GOBIN` is in your system's `PATH`):
-    * **`interactsh-client`** (ProjectDiscovery):
-        ```
-        go install -v https://github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
-        ```
-    * **`assetfinder`** (Tomnomnom):
-        ```
-        go install -v https://github.com/tomnomnom/assetfinder@latest
-        ```
-    * **`httprobe`** (Tomnomnom):
-        ```
-        go install -v https://github.com/tomnomnom/httprobe@latest
-        ```
-4.  **`curl`**: Standard on most Linux/macOS systems.
+## Install
 
----
-
-## 🚀 Getting Started
-
-1.  **Obtain `NovaLure.py`:**
-    Clone the repository or download the `NovaLure.py` script.
-    ```
-    
-      git clone https://github.com/CypherNova1337/NovaLure.git
-    
-      cd NovaLure
-    ```
-2.  **Make it Executable:**
-    ```
-    chmod +x NovaLure.py
-    ```
-3.  **Prepare Targets:**
-    Create a file (e.g., `targets.txt`) with root domains or full URLs, one per line. Alternatively, you can provide a single target directly via the command line or be prompted for input.
-4.  **Run it!**
-    See [Usage](#⚙️-usage) below.
-
----
-
-## ⚙️ Usage
-
-```
-python3 NovaLure.py -h
-
-```
-```
-usage: NovaLure2.py [-h] [-i INPUT_FILE] [-u URL] [-o OUTPUT_FILE] [-t TIMEOUT] [--interactsh-server INTERACTSH_SERVER] [--skip-assetfinder] [--skip-httprobe]
-                    [--test-open-redirects] [--no-test-open-redirects] [--strict-redirects] [--keep-interactsh-log] [-v] [-q]
-
-NovaLure: OAST (Out-of-Band Application Security Testing) automation tool.
-
-options:
-  -h, --help            show this help message and exit
-  -i, --input-file INPUT_FILE
-                        File containing target domains or URLs (one per line).
-  -u, --url URL         Single target URL or domain (e.g., example.com) to scan.
-  -o, --output-file OUTPUT_FILE
-                        Markdown file to save the scan report.
-                        Default: NovaLure_Report.md
-  -t, --timeout TIMEOUT
-                        Timeout in seconds for HTTP requests.
-                        Default: 10
-  --interactsh-server INTERACTSH_SERVER
-                        Interactsh server URL for the client to connect to.
-                        Default: https://interact.sh
-  --skip-assetfinder    Skip assetfinder.
-  --skip-httprobe       Skip httprobe.
-  --test-open-redirects
-                        Enable detailed fuzzing for Open Redirects in GET parameters (Enabled by default).
-  --no-test-open-redirects
-                        Disable detailed fuzzing for Open Redirects in GET parameters.
-  --strict-redirects    Only report header-based Open Redirects if verified by a client-side OAST hit.
-  --keep-interactsh-log
-                        Keep the temporary Interactsh JSON log (interactsh_temp_hits.json).
-  -v, --verbose         Enable verbose output.
-  -q, --quiet           Suppress most informational console output.
+```bash
+git clone https://github.com/CypherNova1337/NovaLure
+cd NovaLure
+pip install -r requirements.txt
 ```
 
-Examples:
+You also need the [Interactsh client](https://github.com/projectdiscovery/interactsh)
+on your `PATH`. Optionally `assetfinder` and `httprobe` if you want NovaLure to
+discover targets itself.
 
-   Interactive input (if no -i or -u):
-   ```
+## Usage
 
-python3 NovaLure.py --interactsh-server https://oast.pro
-   
-   ```
-(Will prompt: "Enter a single domain... or path to a file...")
-
-Scan a single domain:
+```bash
+python3 NovaLure.py -u example.com
 ```
 
-python3 NovaLure.py -u example.com --interactsh-server https://oast.pro
+Discovers hosts, probes them, tests everything, and writes
+`NovaLure_Report.md`.
+
+**Use a list you already have**
+
+```bash
+python3 NovaLure.py -i targets.txt -o report.md
 ```
-Scan from a file with verbose output:
+
+**Skip discovery when your targets are already final**
+
+```bash
+python3 NovaLure.py -i live_urls.txt --skip-assetfinder --skip-httprobe
 ```
 
-python3 NovaLure.py -i targets.txt -v --interactsh-server https://oast.pro
+**Use your own Interactsh server**
+
+```bash
+python3 NovaLure.py -u example.com --interactsh-server https://oast.example
 ```
-Scan live URLs, disabling open redirect parameter fuzzing:
+
+Worth it on a real engagement — the public server is shared, and some targets
+block the default domain outright.
+
+**Cut the open-redirect noise**
+
+```bash
+python3 NovaLure.py -u example.com --strict-redirects
 ```
 
-    python3 NovaLure.py -i live_urls.txt --skip-assetfinder --skip-httprobe --no-test-open-redirects
-```
-📄 Output Interpretation
+Only reports a header-based redirect when an OAST hit confirms it.
 
-    Console: Live updates on the scan progress. Use -v for troubleshooting detailed steps.
-    Markdown Report (NovaLure_Report.md): The primary output. Contains:
-        Scan summary (targets, OAST server used, scanner IP, etc.).
-        Detailed findings per target, broken down by test method (Header OAST, Request-Target OAST, Open Redirect Parameter Fuzzing).
-        Clear indication of:
-            Server-Side OAST Interactions: DNS/HTTP hits from target infrastructure to your Interactsh domain.
-            Verified Open Redirects: Both from parameter fuzzing (confirmed by an OAST hit) and header injections (if the redirect to OAST was followed and hit, especially by the scanner itself).
-            Potential Open Redirects: For header injections, if a redirect to an OAST domain was issued by the server but a client-side hit wasn't correlated (visible if --strict-redirects is off).
-            Direct Reflections: Payloads found in response bodies.
-        Includes source IPs, timestamps, and raw request snippets for HTTP OAST interactions.
+## Options
 
-⚠️ Important Notes
+| Flag | Default | What it does |
+|---|---|---|
+| `-u` | — | Single target domain or URL |
+| `-i` | — | File of targets, one per line |
+| `-o` | `NovaLure_Report.md` | Report file |
+| `-t` | `10` | HTTP timeout, in seconds |
+| `--interactsh-server` | `interact.sh` | Interactsh server to receive callbacks |
+| `--skip-assetfinder` | off | Don't run subdomain discovery |
+| `--skip-httprobe` | off | Don't probe for live hosts |
+| `--no-test-open-redirects` | off | Turn off open-redirect fuzzing |
+| `--strict-redirects` | off | Only report header redirects confirmed by a callback |
+| `--keep-interactsh-log` | off | Keep the raw Interactsh JSON |
+| `-v` / `-q` | off | More / less output |
 
-    DNS Resolution for Interactsh: If interactsh-client fails to start (especially with "no address found for host" errors for the default interact.sh), your machine cannot resolve the default Interactsh server. Use the --interactsh-server <URL> flag with an alternative public server like https://oast.pro or https://oast.live.
-    Tool Paths: Ensure interactsh-client, assetfinder, httprobe, and curl are in your system's PATH. If not, you can modify the *_PATH variables at the top of the NovaLure.py script.
-    Permissions: The script needs execute permissions (chmod +x NovaLure.py).
+## Good to know
 
-💡 Future Enhancements
+- **Callbacks can be slow.** Some SSRFs fire from a queue or a cron job minutes
+  or hours later. A quiet run isn't always a negative one.
+- **The public Interactsh server is shared and well known.** Egress filters
+  block it, and a quiet result may mean the domain was blocked rather than the
+  bug absent. Self-host when it matters.
+- **A DNS-only hit still counts.** If you see the lookup but no HTTP request,
+  something resolved your host — that's server-side request behaviour worth
+  reporting even without a full connection.
+- **It needs outbound reachability.** If the target has no internet egress, the
+  technique can't work, and that's a property of the target rather than a
+  finding.
 
-    Full asyncio concurrency for significantly faster scans.
-    Python-native modules for reconnaissance to reduce external tool dependencies.
-    Expanded OAST vectors (e.g., JSON/XML body injections, Blind XSS to OAST).
-    Deeper analysis and fingerprinting of interacting OAST sources.
+## Authorised use
 
-📜 License
+Only against targets you own or that are in scope for an engagement or bounty
+programme. Making a server contact infrastructure you control is exactly the
+sort of thing that needs to be agreed in advance.
 
-This project is open-source. Consider licensing under the MIT License.
+## License
+
+MIT — see [LICENSE](LICENSE).
