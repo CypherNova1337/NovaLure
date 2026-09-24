@@ -3,12 +3,17 @@ import subprocess
 import time
 import re
 import os
+import sys
 import json
 import shlex
+import shutil
+import tempfile
 import argparse
-from urllib.parse import urlparse, quote, parse_qs, urlencode, urlunparse 
+from urllib.parse import urlparse, quote, parse_qs, urlencode, urlunparse
 from datetime import datetime
 import requests
+
+__version__ = "2.3.0"
 
 # --- Script Configuration ---
 # Paths to external tools. Ensure they are in your system's PATH
@@ -20,7 +25,10 @@ HTTPROBE_PATH = "httprobe"
 # Default file names and settings
 DEFAULT_REPORT_FILE = "NovaLure_Report.md"
 DEFAULT_REQUEST_TIMEOUT = 10
-DEFAULT_INTERACTSH_SERVER_FOR_CLIENT = "https://interact.sh"
+# Leave the Interactsh server unset by default so interactsh-client can
+# auto-select a working public server. The old public "interact.sh" host is
+# frequently unreachable/deprecated, so forcing it made every run fail.
+DEFAULT_INTERACTSH_SERVER_FOR_CLIENT = None
 # For interactive input, if user provides neither -i nor -u
 DEFAULT_INPUT_PROMPT_MESSAGE = "[?] Enter a single domain (e.g., example.com) or path to a domain/URL list file: "
 
@@ -28,8 +36,10 @@ DEFAULT_INPUT_PROMPT_MESSAGE = "[?] Enter a single domain (e.g., example.com) or
 # --- Global Variables ---
 interactsh_base_domain = None
 interactsh_process = None
-INTERACTSH_TEMP_HITS_FILE = "interactsh_temp_hits.json"
-NOVALURE_PUBLIC_IP = None 
+# Keep transient files out of the working directory (avoids clutter and
+# read-only-CWD failures).
+INTERACTSH_TEMP_HITS_FILE = os.path.join(tempfile.gettempdir(), "novalure_interactsh_hits.json")
+NOVALURE_PUBLIC_IP = None
 
 # ANSI Colors for console output
 class Colors:
@@ -115,7 +125,7 @@ def print_banner():
 \____|__  /\____/ \_/  (____  /_______ \____/ |__|    \___  >
         \/                  \/        \/                  \/ 
     {Colors.GREEN}OAST Scanner by Cyphernova1337{Colors.ENDC}
-    Version 2.2.0 (Finalized Input & Flags)
+    Version {__version__}
 """
     print(banner)
 
@@ -186,15 +196,16 @@ def start_interactsh_client(server_url):
             console_log(f"Could not remove old temp hits file {INTERACTSH_TEMP_HITS_FILE}: {e}", level="WARN")
 
 
-    console_log(f"Starting interactsh-client (Server: {server_url}, Output: {INTERACTSH_TEMP_HITS_FILE})...", level="INFO")
-    command = (
-        f"{INTERACTSH_CLIENT_PATH} -s {server_url} "
-        f"-json -o {INTERACTSH_TEMP_HITS_FILE} -v -poll-interval 5"
-    )
-    
+    server_label = server_url if server_url else "auto-select (interactsh-client default)"
+    console_log(f"Starting interactsh-client (Server: {server_label}, Output: {INTERACTSH_TEMP_HITS_FILE})...", level="INFO")
+    command_parts = [INTERACTSH_CLIENT_PATH]
+    if server_url:
+        command_parts += ["-s", server_url]
+    command_parts += ["-json", "-o", INTERACTSH_TEMP_HITS_FILE, "-v", "-poll-interval", "5"]
+
     try:
         interactsh_process = subprocess.Popen(
-            shlex.split(command),
+            command_parts,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, 
             text=True,
@@ -205,8 +216,10 @@ def start_interactsh_client(server_url):
         console_log(f"FATAL: interactsh-client not found. Searched at '{INTERACTSH_CLIENT_PATH}'. Please ensure it's installed and in your PATH, or update INTERACTSH_CLIENT_PATH in the script.", level="FATAL")
         return False
 
+    # Match the payload domain line, e.g. "[INF] abc123.oast.online".
+    # Accept any current/future oast.* TLD rather than a fixed allow-list.
     domain_pattern = re.compile(
-        r"^\[INF\]\s+([\w.-]+\.oast\.(?:fun|live|site|online|me|pro))$"
+        r"\[INF\]\s+([a-zA-Z0-9][\w.-]*\.oast\.[a-z]{2,})\b"
     )
     
     start_time = time.time()
@@ -287,11 +300,23 @@ def get_live_urls_from_file(input_file_path, skip_assetfinder=False, skip_httpro
 
     if skip_assetfinder and skip_httprobe:
         console_log("Skipping recon. Assuming input file contains live URLs.", level="INFO")
+        auto_prefixed = False
         with open(input_file_path, "r") as f:
             for line in f:
                 stripped_line = line.strip()
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue  # skip blanks and comments
                 if stripped_line.startswith(("http://", "https://")):
                     live_urls.add(stripped_line)
+                else:
+                    # Scheme-less host (e.g. "example.com"): try both schemes so
+                    # a bare domain still gets tested when recon is skipped.
+                    console_log(f"'{stripped_line}' has no scheme; testing both https:// and http://.", level="DEBUG")
+                    live_urls.add(f"https://{stripped_line}")
+                    live_urls.add(f"http://{stripped_line}")
+                    auto_prefixed = True
+        if auto_prefixed:
+            console_log("Some targets had no scheme; https:// and http:// variants were added.", level="INFO")
         console_log(f"Loaded {len(live_urls)} URLs directly from input file.")
         return list(live_urls)
 
@@ -379,7 +404,7 @@ def _perform_request_and_analyze(test_info, target_url, req_timeout, headers=Non
     """Helper to make request and analyze for reflection/redirects."""
     try:
         url_to_fetch = new_url_for_get if new_url_for_get else target_url
-        effective_headers = {"User-Agent": "NovaLure-OAST-Scanner/2.2.0"}
+        effective_headers = {"User-Agent": f"NovaLure-OAST-Scanner/{__version__}"}
         if headers:
             effective_headers.update(headers)
 
@@ -488,7 +513,7 @@ def test_url_for_oast(target_url, req_timeout, args_cli):
                 status_code_from_curl = "M4_Status_Error" 
                 try:
                     curl_m4_cmd = (f"curl -s -L --connect-timeout {int(req_timeout/2)} --max-time {req_timeout} "
-                                   f"-H \"User-Agent: NovaLure-OAST-Scanner/2.2.0\" " 
+                                   f"-H \"User-Agent: NovaLure-OAST-Scanner/{__version__}\" "
                                    f"\"{target_url}\" --request-target \"{target_for_m4_payload}\" -o /dev/null -w \"%%{{http_code}}\"")
                     process_result = subprocess.run(shlex.split(curl_m4_cmd), capture_output=True, text=True, timeout=req_timeout + 2)
                     if process_result.stderr: current_test_info["errors"].append(f"curl stderr: {process_result.stderr.strip()}")
@@ -562,7 +587,7 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
         f.write(f"- **Scan Started:** {scan_start_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
         f.write(f"- **Scan Finished:** {scan_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
         f.write(f"- **Input Source:** `{args.actual_input_source}`\n") # Use the new attribute
-        f.write(f"- **Interactsh Server Used by Client:** `{args.interactsh_server}`\n")
+        f.write(f"- **Interactsh Server Used by Client:** `{args.interactsh_server or 'auto-selected (interactsh-client default)'}`\n")
         if interactsh_base_domain: f.write(f"- **Interactsh Base Domain Captured:** `{interactsh_base_domain}`\n")
         if NOVALURE_PUBLIC_IP: f.write(f"- **Scanner Public IP:** `{NOVALURE_PUBLIC_IP}`\n")
         f.write(f"- **Strict Redirect Reporting (Header Injections):** `{'Enabled' if args.strict_redirects else 'Disabled - Showing Potentials'}`\n")
@@ -664,6 +689,39 @@ def generate_markdown_report(all_tests_results, report_file_path, scan_start_tim
             f.write("\n---\n\n")
     console_log(f"Markdown report generated: {report_file_path}", level="REPORT_INFO")
 
+def check_dependencies(args):
+    """Verify external tools before doing any work.
+
+    interactsh-client is mandatory (the whole technique depends on it).
+    Missing recon tools (assetfinder/httprobe) are not fatal: we warn and
+    auto-skip them so the scan can still run on the targets given.
+    curl is only needed for the Request-Target (M4) test; warn if absent.
+
+    Returns True if the scan can proceed, False otherwise.
+    """
+    if not shutil.which(INTERACTSH_CLIENT_PATH):
+        console_log(f"Required tool '{INTERACTSH_CLIENT_PATH}' not found on PATH.", level="FATAL")
+        console_log("Install it with:", level="INFO")
+        console_log("  go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest", level="INFO")
+        console_log("or grab a release from https://github.com/projectdiscovery/interactsh", level="INFO")
+        return False
+
+    if not args.skip_assetfinder and not shutil.which(ASSETFINDER_PATH):
+        console_log(f"'{ASSETFINDER_PATH}' not found; skipping subdomain discovery for this run "
+                    f"(install it or pass --skip-assetfinder to silence this).", level="WARN")
+        args.skip_assetfinder = True
+
+    if not args.skip_httprobe and not shutil.which(HTTPROBE_PATH):
+        console_log(f"'{HTTPROBE_PATH}' not found; skipping live-host probing for this run "
+                    f"(install it or pass --skip-httprobe to silence this).", level="WARN")
+        args.skip_httprobe = True
+
+    if not shutil.which("curl"):
+        console_log("'curl' not found; the Request-Target (M4) test will be skipped.", level="WARN")
+
+    return True
+
+
 def main():
     global VERBOSE_MODE, QUIET_MODE, NOVALURE_PUBLIC_IP
     parser = argparse.ArgumentParser(
@@ -674,72 +732,78 @@ def main():
     parser.add_argument("-u", "--url", help="Single target URL or domain (e.g., example.com) to scan.")
     parser.add_argument("-o", "--output-file", default=DEFAULT_REPORT_FILE, help=f"Markdown file to save the scan report.\nDefault: {DEFAULT_REPORT_FILE}")
     parser.add_argument("-t", "--timeout", type=int, default=DEFAULT_REQUEST_TIMEOUT, help=f"Timeout in seconds for HTTP requests.\nDefault: {DEFAULT_REQUEST_TIMEOUT}")
-    parser.add_argument("--interactsh-server", default=DEFAULT_INTERACTSH_SERVER_FOR_CLIENT, help=f"Interactsh server URL for the client to connect to.\nDefault: {DEFAULT_INTERACTSH_SERVER_FOR_CLIENT}")
+    parser.add_argument("--interactsh-server", default=DEFAULT_INTERACTSH_SERVER_FOR_CLIENT, help="Interactsh server URL for the client to connect to.\nDefault: auto-select a working public server (recommended).")
     parser.add_argument("--skip-assetfinder", action="store_true", help="Skip assetfinder.")
     parser.add_argument("--skip-httprobe", action="store_true", help="Skip httprobe.")
     
-    # Corrected flags for open redirect testing
-    parser.add_argument("--test-open-redirects", dest="test_open_redirects", action="store_true", default=True, help="Enable detailed fuzzing for Open Redirects in GET parameters (Enabled by default).")
-    parser.add_argument("--no-test-open-redirects", dest="test_open_redirects", action="store_false", help="Disable detailed fuzzing for Open Redirects in GET parameters.")
+    # Open-redirect fuzzing is on by default; the enable flag is kept for
+    # explicit/scripted use but hidden to avoid cluttering the help output.
+    parser.add_argument("--test-open-redirects", dest="test_open_redirects", action="store_true", default=True, help=argparse.SUPPRESS)
+    parser.add_argument("--no-test-open-redirects", dest="test_open_redirects", action="store_false", help="Disable Open Redirect fuzzing in GET parameters (on by default).")
     
     parser.add_argument("--strict-redirects", action="store_true", default=False, help="Only report header-based Open Redirects if verified by a client-side OAST hit.")
     parser.add_argument("--keep-interactsh-log", action="store_true", help=f"Keep the temporary Interactsh JSON log ({INTERACTSH_TEMP_HITS_FILE}).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output.")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress most informational console output.")
+    parser.add_argument("--version", action="version", version=f"NovaLure {__version__}")
     args = parser.parse_args()
 
     VERBOSE_MODE = args.verbose
     QUIET_MODE = args.quiet
     if VERBOSE_MODE and QUIET_MODE:
-        print(f"{Colors.RED}{Colors.BOLD}[!] Cannot be both verbose (-v) and quiet (-q). Exiting.{Colors.ENDC}"); return
+        print(f"{Colors.RED}{Colors.BOLD}[!] Cannot be both verbose (-v) and quiet (-q). Exiting.{Colors.ENDC}"); return 1
 
-    print_banner() 
-    
-    input_file_to_process = None 
+    print_banner()
+
+    if not check_dependencies(args):
+        return 1
+
+    input_file_to_process = None
+    temp_input_file = None  # Track a temp file we create so we can clean it up reliably
     actual_input_source_for_report = None # Will hold the string name of the input for the report
 
     if args.url:
         console_log(f"Single target URL/domain provided via -u: {args.url}", level="INFO")
-        temp_file_name = f"temp_novalure_single_target_{int(time.time())}.txt"
-        with open(temp_file_name, "w") as f: f.write(args.url.strip() + "\n")
-        input_file_to_process = temp_file_name
-        actual_input_source_for_report = args.url 
-    elif args.input_file: 
+        temp_input_file = os.path.join(tempfile.gettempdir(), f"novalure_single_target_{int(time.time())}.txt")
+        with open(temp_input_file, "w") as f: f.write(args.url.strip() + "\n")
+        input_file_to_process = temp_input_file
+        actual_input_source_for_report = args.url
+    elif args.input_file:
         if not os.path.exists(args.input_file):
-            console_log(f"Input file '{args.input_file}' provided via -i not found.", level="FATAL"); return
+            console_log(f"Input file '{args.input_file}' provided via -i not found.", level="FATAL"); return 1
         input_file_to_process = args.input_file
         actual_input_source_for_report = args.input_file
-    else: 
+    else:
         try:
             console_log("No input file or URL specified via command-line flags.", level="INFO")
             user_input_str = input(f"{Colors.YELLOW}{DEFAULT_INPUT_PROMPT_MESSAGE}{Colors.ENDC}").strip()
-            if not user_input_str: console_log("No input provided at prompt. Exiting.", level="FATAL"); return
+            if not user_input_str: console_log("No input provided at prompt. Exiting.", level="FATAL"); return 1
 
-            if os.path.isfile(user_input_str): 
+            if os.path.isfile(user_input_str):
                 input_file_to_process = user_input_str
-                actual_input_source_for_report = input_file_to_process 
+                actual_input_source_for_report = input_file_to_process
                 console_log(f"Using user-provided file: {input_file_to_process}", level="INFO")
-            elif '.' in user_input_str and not any(c in user_input_str for c in [' ', '/', '\\']) and len(user_input_str) > 3: 
-                temp_file_name = f"temp_novalure_single_target_{int(time.time())}.txt"
-                with open(temp_file_name, "w") as f: f.write(user_input_str + "\n")
-                input_file_to_process = temp_file_name
-                actual_input_source_for_report = user_input_str 
+            elif '.' in user_input_str and not any(c in user_input_str for c in [' ', '/', '\\']) and len(user_input_str) > 3:
+                temp_input_file = os.path.join(tempfile.gettempdir(), f"novalure_single_target_{int(time.time())}.txt")
+                with open(temp_input_file, "w") as f: f.write(user_input_str + "\n")
+                input_file_to_process = temp_input_file
+                actual_input_source_for_report = user_input_str
                 console_log(f"Processing single target from interactive input: {user_input_str}", level="INFO")
             else:
-                console_log(f"Invalid input or file not found: '{user_input_str}'. Exiting.", level="FATAL"); return
-        except KeyboardInterrupt: console_log("\nUser aborted input. Exiting.", level="INFO"); return
-        except Exception as e: console_log(f"Error during interactive input: {e}", level="FATAL"); return
+                console_log(f"Invalid input or file not found: '{user_input_str}'. Exiting.", level="FATAL"); return 1
+        except KeyboardInterrupt: console_log("\nUser aborted input. Exiting.", level="INFO"); return 130
+        except Exception as e: console_log(f"Error during interactive input: {e}", level="FATAL"); return 1
 
     if not input_file_to_process:
-        console_log("No valid input target or file determined. Exiting.", level="FATAL"); return
-    
+        console_log("No valid input target or file determined. Exiting.", level="FATAL"); return 1
+
     args.actual_input_source = actual_input_source_for_report # Store for report function
 
     if os.path.exists(args.output_file):
         console_log(f"Output file {args.output_file} exists. It will be overwritten.", level="WARN")
         try: os.remove(args.output_file)
-        except OSError as e: console_log(f"Could not remove existing report file {args.output_file}: {e}", level="ERROR"); return 
-    
+        except OSError as e: console_log(f"Could not remove existing report file {args.output_file}: {e}", level="ERROR"); return 1
+
     console_log("### NovaLure OAST Scanner Starting ###", level="INFO")
     scan_start_time = datetime.now()
 
@@ -749,9 +813,13 @@ def main():
     get_public_ip()
 
     if not start_interactsh_client(args.interactsh_server):
-        console_log("Could not start or configure interactsh-client. Exiting.", level="FATAL"); return
-    if not interactsh_base_domain: 
-        console_log("Interactsh base domain was not captured. Exiting.", level="FATAL"); stop_interactsh_client(); return
+        console_log("Could not start or configure interactsh-client. Exiting.", level="FATAL")
+        if temp_input_file and os.path.exists(temp_input_file): os.remove(temp_input_file)
+        return 1
+    if not interactsh_base_domain:
+        console_log("Interactsh base domain was not captured. Exiting.", level="FATAL"); stop_interactsh_client()
+        if temp_input_file and os.path.exists(temp_input_file): os.remove(temp_input_file)
+        return 1
 
     console_log(f"Interactsh client logging hits to temporary file: {INTERACTSH_TEMP_HITS_FILE}", level="INFO")
     console_log("Giving Interactsh client ~3 seconds to fully initialize before proceeding...", level="INFO")
@@ -790,14 +858,20 @@ def main():
     scan_end_time = datetime.now()
     generate_markdown_report(all_scan_results_with_hits, args.output_file, scan_start_time, scan_end_time, args)
 
-    if input_file_to_process.startswith("temp_novalure_single_target_") and os.path.exists(input_file_to_process):
-        os.remove(input_file_to_process) 
+    if temp_input_file and os.path.exists(temp_input_file):
+        os.remove(temp_input_file)
     if not args.keep_interactsh_log and os.path.exists(INTERACTSH_TEMP_HITS_FILE):
         console_log(f"Removing temporary Interactsh log: {INTERACTSH_TEMP_HITS_FILE}", level="INFO")
         try: os.remove(INTERACTSH_TEMP_HITS_FILE)
         except OSError as e: console_log(f"Error removing temporary file {INTERACTSH_TEMP_HITS_FILE}: {e}", level="WARN")
-    
+
     console_log("### NovaLure Scan Finished ###", level="SUCCESS_IMPORTANT")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}[-] Interrupted by user. Cleaning up...{Colors.ENDC}")
+        stop_interactsh_client()
+        sys.exit(130)

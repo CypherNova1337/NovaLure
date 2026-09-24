@@ -75,8 +75,10 @@ python3 NovaLure.py -i live_urls.txt --skip-assetfinder --skip-httprobe
 python3 NovaLure.py -u example.com --interactsh-server https://oast.example
 ```
 
-Worth it on a real engagement — the public server is shared, and some targets
-block the default domain outright.
+By default NovaLure lets the Interactsh client pick a working public server
+(`oast.fun`, `oast.me`, and friends). Pass `--interactsh-server` to pin your
+own — worth it on a real engagement, since the public servers are shared and
+some targets block them outright.
 
 **Cut the open-redirect noise**
 
@@ -94,7 +96,7 @@ Only reports a header-based redirect when an OAST hit confirms it.
 | `-i` | — | File of targets, one per line |
 | `-o` | `NovaLure_Report.md` | Report file |
 | `-t` | `10` | HTTP timeout, in seconds |
-| `--interactsh-server` | `interact.sh` | Interactsh server to receive callbacks |
+| `--interactsh-server` | auto | Interactsh server to receive callbacks (default: let the client auto-select a working public server) |
 | `--skip-assetfinder` | off | Don't run subdomain discovery |
 | `--skip-httprobe` | off | Don't probe for live hosts |
 | `--no-test-open-redirects` | off | Turn off open-redirect fuzzing |
