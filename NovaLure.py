@@ -117,8 +117,8 @@ OPEN_REDIRECT_PAYLOAD_PATTERNS = [
 def print_banner():
     if QUIET_MODE:
         return
-    banner = f"""
- _______                      .____                          
+    banner = rf"""
+ _______                      .____
  \      \   _______  _______  |    |    __ _________   ____  
  /   |   \ /  _ \  \/ /\__  \ |    |   |  |  \_  __ \_/ __ \ 
 /    |    (  <_> )   /  / __ \|    |___|  |  /|  | \/\  ___/ 
